@@ -50,12 +50,24 @@ zones (for example, a long pipeline or a state boundary) is measured
 using only the zone of its center point, so the result is slightly less
 accurate. For typical survey-sized features the error is small.
 
+the server receives the whole upload before our size check runs. In production, a reverse proxy such as nginx should also set a maximum body size
+
 ## Future Scope
 - Improve accuracy for very large features that cross UTM zones, by using
   an equal-area projection or geodesic measurement (`pyproj.Geod`) when a
   feature's bounding box spans more than one zone.
 - support zips with several Shapefiles, and try to repair a missing .shx
 - use Alembic for migrations, and use PostgreSQL with PostGIS for spatial queries and indexes
+
+- Background processing with Celery or RQ (with Redis) for very large
+  files. The `status` field is already in place for this.
+- List and delete endpoints for uploaded files.
+- Authentication, so each user only sees their own files.
+- Database migrations with Alembic.
+- PostgreSQL with PostGIS for spatial queries.
+- Better accuracy for features that cross UTM zones (equal-area
+  projection or geodesic measurement).
+- Support zips with several Shapefiles.
 
 
 
@@ -75,3 +87,159 @@ Difference %:  0.1161
   "zip slip" attacks. The total unpacked size is also limited to protect
   against zip bombs.
 - For KML files, all layers (folders) are read and combined.
+
+### Request processing
+
+- Files are processed synchronously, inside the upload request. This keeps
+  the system simple and works well for the 50 MB upload limit. Endpoints
+  are plain `def` functions, so FastAPI runs them in a worker thread and
+  one slow upload doesn't block other requests.
+- For very large files, processing would move to a background worker
+  (Celery or RQ with Redis). The `status` field (PROCESSING / COMPLETED /
+  FAILED) is already in place, so the API would not need to change much.
+
+### Error handling
+
+- A file that can't be read is saved with status FAILED and the reason,
+  and the API answers 422 with the file id and the reason.
+- A single bad feature (empty, invalid or unsupported geometry) gets its
+  own error message. The rest of the file is still processed and the file
+  is COMPLETED.
+- Measurements are paged (`limit`, `offset`), because a file may contain
+  thousands of features. The summary always counts the whole file.
+- The 50 MB upload limit is checked while reading the upload. In
+  production, a reverse proxy should also limit the request body size.
+
+### API section
+#	README section	What goes in it
+1	Title and short description	What the service does
+2	Setup	Install and run (Step 1)
+3	API	Endpoints, status codes table, example requests and responses (this question)
+4	Architecture	Folder structure, file-processing flow, measurement flow, CRS handling
+5	Design Decisions	CRS choice and limit (Step 2), file handling (Step 4), database (Step 5), request processing and error handling (Step 6)
+6	Testing	How to run pytest
+7	Learning	What you learned
+8	Future Scope	Everything you listed along the way, including Celery/RQ, delete and list endpoints, and authentication
+
+## API
+
+Interactive docs are available at http://127.0.0.1:8000/docs while the
+server is running.
+
+### 1. Upload a file
+
+`POST /api/files/`
+
+Accepts a `.kml` file or a `.zip` containing one Shapefile. The file is
+processed right away.
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/files/ -F "file=@survey.kml"
+```
+
+On Windows PowerShell, use `curl.exe` instead of `curl`.
+
+Response `201 Created`:
+
+```json
+{
+  "id": "870fc184-2632-45e7-b53a-a66da1f50c2b",
+  "filename": "survey.kml",
+  "feature_count": 1,
+  "crs": "EPSG:4326",
+  "status": "COMPLETED",
+  "error_message": null,
+  "created_at": "2026-10-09T10:15:30.123456Z"
+}
+```
+
+### 2. Get file information
+
+`GET /api/files/{id}/`
+
+```bash
+curl http://127.0.0.1:8000/api/files/870fc184-2632-45e7-b53a-a66da1f50c2b/
+```
+
+Returns the same JSON as the upload response.
+
+### 3. Get measurements
+
+`GET /api/files/{id}/measurements/`
+
+Optional query parameters: `limit` (default 1000, max 5000) and `offset`
+(default 0), for paging through large files.
+
+```bash
+curl "http://127.0.0.1:8000/api/files/870fc184-2632-45e7-b53a-a66da1f50c2b/measurements/"
+```
+
+Response `200 OK` (properties shortened here):
+
+```json
+{
+  "file_id": "870fc184-2632-45e7-b53a-a66da1f50c2b",
+  "crs": "EPSG:4326",
+  "feature_count": 1,
+  "limit": 1000,
+  "offset": 0,
+  "summary": {"measured": 1, "no_measurement": 0, "errors": 0},
+  "features": [
+    {
+      "index": 0,
+      "geometry_type": "Polygon",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[77.59, 12.97, 0], [77.6, 12.97, 0], [77.6, 12.98, 0],
+                         [77.59, 12.98, 0], [77.59, 12.97, 0]]]
+      },
+      "crs": "EPSG:4326",
+      "properties": {"Name": "Test Square", "description": null},
+      "measurement": {
+        "type": "area",
+        "value": 1201683.9190970361,
+        "unit": "m2",
+        "crs_used": "EPSG:32643"
+      },
+      "error": null
+    }
+  ]
+}
+```
+
+- `measurement` is `null` for points (no measurement is needed) and for
+  features that failed.
+- A failed feature has an `error` message. The other features in the
+  file are still measured.
+- `summary` counts the whole file, even when `limit` and `offset` show
+  only some of the features.
+
+### Error responses
+
+A file that can't be read (here, a fake zip) returns `422`:
+
+```json
+{
+  "detail": "The file is not a valid zip archive.",
+  "id": "4c1d9a52-0b3e-4f7a-9d61-2e8b7a5c3f10",
+  "status": "FAILED"
+}
+```
+
+Other errors return `{"detail": "..."}`, for example:
+
+```json
+{"detail": "File not found."}
+```
+
+### Status codes
+
+| Situation | Code |
+|---|---|
+| Success | `201` |
+| Wrong file extension or no file name | `400` |
+| File too large (over 50 MB) | `413` |
+| File can't be read (bad zip, no CRS, and so on) | `422` |
+| Unknown file id | `404` |
+| Measurements asked for a file that is not `COMPLETED` | `409` |
+| Unexpected server error | `500` |
