@@ -5,6 +5,13 @@ import geopandas as gpd
 import pytest
 from shapely.geometry import Polygon
 
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from app import models # noqa: F401
+from app.database import Base
+
 DATA_DIR = Path(__file__).parent / "data"
 
 MIXED_KML = """<?xml version="1.0" encoding="UTF-8"?>
@@ -77,3 +84,19 @@ def mixed_kml(tmp_path):
 @pytest.fixture
 def sample_kml():
     return DATA_DIR / "square.kml"
+
+@pytest.fixture
+def db_session():
+    """A fresh, empty in-memory database for each test."""
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,   # keeps one shared in-memory database
+    )
+    Base.metadata.create_all(engine)
+    session = sessionmaker(bind=engine, expire_on_commit=False)()
+    try:
+        yield session
+    finally:
+        session.close()
+        engine.dispose()

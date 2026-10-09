@@ -29,6 +29,20 @@ shapes in different places still gets sensible results.
   measures on the earth's curved surface, but it is a different approach
   from the "project then measure" flow in the task.
 
+### Database
+- SQLAlchemy with SQLite by default. Set `DATABASE_URL` to use Postgres
+  (or any other SQLAlchemy-supported database) with no code changes.
+- Measurements are calculated once, at upload time, and stored in the
+  database. Reading them later is a simple query and needs no
+  reprocessing.
+- One row per feature. A failed feature stores its own error message, so
+  one bad feature never fails the whole file.
+- Feature properties are stored as JSON because attribute names differ
+  from file to file.
+- Geometry is stored as GeoJSON in the file's original CRS; the CRS is
+  stored next to it.
+- Tables are created on startup for simplicity.
+
 ### Known limitation
 
 UTM zones are 6 degrees wide. A very large feature that crosses several
@@ -41,6 +55,8 @@ accurate. For typical survey-sized features the error is small.
   an equal-area projection or geodesic measurement (`pyproj.Geod`) when a
   feature's bounding box spans more than one zone.
 - support zips with several Shapefiles, and try to repair a missing .shx
+- use Alembic for migrations, and use PostgreSQL with PostGIS for spatial queries and indexes
+
 
 
 Result
