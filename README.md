@@ -40,6 +40,7 @@ accurate. For typical survey-sized features the error is small.
 - Improve accuracy for very large features that cross UTM zones, by using
   an equal-area projection or geodesic measurement (`pyproj.Geod`) when a
   feature's bounding box spans more than one zone.
+- support zips with several Shapefiles, and try to repair a missing .shx
 
 
 Result
@@ -47,3 +48,14 @@ For a 1km square near Bengaluru, the UTM result differs from the geodesic calcul
 UTM area:      1201683.92
 Geodesic area: 1200289.84
 Difference %:  0.1161
+
+### File handling
+
+- Supported uploads: a `.zip` containing one Shapefile, or a `.kml` file.
+- A Shapefile without a `.prj` (no CRS) is rejected. Guessing the CRS
+  could silently give wrong measurements, so a clear error is safer.
+- A zip with more than one Shapefile is rejected (one upload = one dataset).
+- The zip is read in place and never unpacked to disk, which avoids
+  "zip slip" attacks. The total unpacked size is also limited to protect
+  against zip bombs.
+- For KML files, all layers (folders) are read and combined.
