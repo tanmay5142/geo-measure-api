@@ -10,7 +10,10 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app import models # noqa: F401
-from app.database import Base
+from app.database import Base, get_db
+
+from fastapi.testclient import TestClient
+from app.main import app
 
 DATA_DIR = Path(__file__).parent / "data"
 
@@ -100,3 +103,44 @@ def db_session():
     finally:
         session.close()
         engine.dispose()
+
+
+INVALID_POLYGON_KML = """<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <Placemark>
+      <name>Good plot</name>
+      <Polygon><outerBoundaryIs><LinearRing><coordinates>
+        77.59,12.97,0 77.60,12.97,0 77.60,12.98,0 77.59,12.98,0 77.59,12.97,0
+      </coordinates></LinearRing></outerBoundaryIs></Polygon>
+    </Placemark>
+    <Placemark>
+      <name>Bowtie plot</name>
+      <Polygon><outerBoundaryIs><LinearRing><coordinates>
+        77.59,12.97,0 77.60,12.98,0 77.60,12.97,0 77.59,12.98,0 77.59,12.97,0
+      </coordinates></LinearRing></outerBoundaryIs></Polygon>
+    </Placemark>
+  </Document>
+</kml>
+"""
+
+
+@pytest.fixture
+def invalid_polygon_kml(tmp_path):
+    """One good polygon and one 'bowtie' polygon that crosses itself."""
+    path = tmp_path / "invalid.kml"
+    path.write_text(INVALID_POLYGON_KML)
+    return path
+
+
+@pytest.fixture
+def client(db_session):
+    """A test client that uses the in-memory database."""
+    def override_get_db():
+        yield db_session
+
+    app.dependency_overrides[get_db] = override_get_db
+    # No "with" here on purpose: it would run the startup code,
+    # which creates the real geo.db file.
+    yield TestClient(app)
+    app.dependency_overrides.clear()        

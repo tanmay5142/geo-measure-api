@@ -243,3 +243,28 @@ Other errors return `{"detail": "..."}`, for example:
 | Unknown file id | `404` |
 | Measurements asked for a file that is not `COMPLETED` | `409` |
 | Unexpected server error | `500` |
+
+
+
+## Testing
+
+Install the requirements, then run from the project root:
+
+```bash
+pytest -v
+```
+
+The tests use an in-memory SQLite database, so the real `geo.db` is
+never touched. Each test starts with a clean database.
+
+| File | What it covers |
+|---|---|
+| `tests/test_crs.py` | UTM zone selection and conversion to EPSG:4326 |
+| `tests/test_measurement.py` | Area and length, compared with geodesic results; errors for bad geometry |
+| `tests/test_file_reader.py` | Reading KML and zipped Shapefiles; rejecting bad files |
+| `tests/test_models.py` | Database tables, defaults, ordering and cascade delete |
+| `tests/test_api.py` | The full API: upload, file info, measurements, paging, validation, error cases and cleanup |
+
+Important cases tested: a bad feature doesn't stop the rest of the file
+(both for invalid geometry and for an unexpected crash while measuring),
+a file with no CRS is rejected, and temporary files are always deleted.
