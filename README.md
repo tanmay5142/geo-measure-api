@@ -29,6 +29,19 @@ shapes in different places still gets sensible results.
   measures on the earth's curved surface, but it is a different approach
   from the "project then measure" flow in the task.
 
+
+### Docker
+
+- The image uses `python:3.12-slim`. The geospatial libraries are
+  installed from prebuilt wheels that include GDAL, PROJ and GEOS, so no
+  system packages are needed.
+- Dependencies are installed before the code is copied, so rebuilds after
+  a code change are fast.
+- The container runs as a non-root user and has a health check on `/health`.
+- `docker-compose.yml` starts PostgreSQL and waits for it to be healthy
+  before starting the API.
+
+
 ### Database
 - SQLAlchemy with SQLite by default. Set `DATABASE_URL` to use Postgres
   (or any other SQLAlchemy-supported database) with no code changes.
@@ -58,6 +71,8 @@ the server receives the whole upload before our size check runs. In production, 
   feature's bounding box spans more than one zone.
 - support zips with several Shapefiles, and try to repair a missing .shx
 - use Alembic for migrations, and use PostgreSQL with PostGIS for spatial queries and indexes
+
+- A multi-stage docker build, separate dev and productionnrequirements, running Alembic migrations on startup, and running several workers in production.
 
 - Background processing with Celery or RQ (with Redis) for very large
   files. The `status` field is already in place for this.
@@ -268,3 +283,44 @@ never touched. Each test starts with a clean database.
 Important cases tested: a bad feature doesn't stop the rest of the file
 (both for invalid geometry and for an unexpected crash while measuring),
 a file with no CRS is rejected, and temporary files are always deleted.
+
+
+
+## Setup
+
+### Requirements
+
+- Python 3.11 or newer (3.12 recommended)
+- Docker (optional, for the PostgreSQL setup)
+
+### Run locally (SQLite)
+
+```bash
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload
+```
+
+The API runs at http://127.0.0.1:8000 and the interactive docs are at
+http://127.0.0.1:8000/docs. By default it stores data in a local
+`geo.db` SQLite file.
+
+### Run with Docker (PostgreSQL)
+
+```bash
+docker compose up --build
+```
+
+This starts the API and a PostgreSQL database. Data is kept in a Docker
+volume. Stop with `docker compose down` (add `-v` to erase the data).
+
+### Configuration
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `DATABASE_URL` | `sqlite:///./geo.db` | Any SQLAlchemy database URL |
+
+The upload limits (50 MB upload, 200 MB unpacked) are constants in
+`app/config.py`. The passwords in `docker-compose.yml` are for local use
+only.
